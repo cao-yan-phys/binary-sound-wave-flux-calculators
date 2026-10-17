@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-size", type=float, default=0.0)
     parser.add_argument("--source-window", choices=("none", "gaussian", "lorentzian"), default="gaussian")
     parser.add_argument("--rtol", type=float, default=1.0e-5)
+    parser.add_argument("--atol", type=float, default=1.0e-10)
+    parser.add_argument("--anomaly-rtol", type=float, default=1.0e-3)
+    parser.add_argument("--anomaly-atol", type=float, default=1.0e-5)
+    parser.add_argument("--anomaly-max-refinements", type=int, default=3)
+    parser.add_argument("--anomaly-max-n-ell", type=int, default=2048)
     parser.add_argument("--allow-unconverged", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=None)
     return parser.parse_args()
@@ -48,6 +53,11 @@ def main() -> None:
         source_size=args.source_size,
         source_window=args.source_window,
         tail_rtol=args.rtol,
+        tail_atol=args.atol,
+        anomaly_rtol=args.anomaly_rtol,
+        anomaly_atol=args.anomaly_atol,
+        anomaly_max_refinements=args.anomaly_max_refinements,
+        anomaly_max_n_ell=args.anomaly_max_n_ell,
         strict_convergence=not args.allow_unconverged,
         backend=args.backend,
         engine=args.engine,
@@ -72,6 +82,7 @@ def main() -> None:
     print(f"delta_varpi_static = {result.delta_varpi_static}")
     print(f"delta_varpi_osc = {result.delta_varpi_osc}")
     print(f"delta_varpi_total = {result.delta_varpi_total}")
+    print(f"delta_varpi_total_normalized = {result.delta_varpi_total_normalized}")
     print(f"engine = {result.metadata['engine']}")
     print(f"backend = {result.metadata['backend']}")
     print(f"static_ir_status = {result.static_ir_status}")
@@ -80,6 +91,9 @@ def main() -> None:
     print(f"n_max_evaluated = {result.metadata['n_max_evaluated']}")
     print(f"error_radial = {result.error_radial}")
     print(f"error_harmonic = {result.error_harmonic}")
+    print(f"anomaly_converged = {result.anomaly_converged}")
+    print(f"n_ell_used = {result.n_ell_used}")
+    print(f"error_anomaly = {result.error_anomaly}")
 
 
 if __name__ == "__main__":

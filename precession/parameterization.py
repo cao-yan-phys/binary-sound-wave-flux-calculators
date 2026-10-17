@@ -24,6 +24,8 @@ def _orbit_from_flux_parameters(nu: float, e: float) -> BinaryOrbit:
 def _annotate(result: PrecessionResult, parameters: dict[str, float | bool | str]) -> PrecessionResult:
     metadata = dict(result.metadata)
     metadata["flux_parameterization"] = parameters
+    metadata["response_eta"] = parameters["n0"]**2
+    metadata["propagation_n0"] = parameters["n0"] if parameters["include_self_gravity"] else 0.0
     return replace(result, metadata=metadata)
 
 
@@ -37,9 +39,9 @@ def classical_precession_flux_parameters(
     config: PrecessionConfig | None = None,
 ) -> PrecessionResult:
 
-    if n0 < 0.0:
+    if not math.isfinite(n0) or n0 < 0.0:
         raise ValueError("n0 must be non-negative")
-    if A <= 0.0:
+    if not math.isfinite(A) or A <= 0.0:
         raise ValueError("A = a*Omega for a classical fluid must be positive")
     orbit = _orbit_from_flux_parameters(nu, e)
     fluid = ClassicalFluid(
@@ -73,9 +75,9 @@ def quantum_precession_flux_parameters(
     config: PrecessionConfig | None = None,
 ) -> PrecessionResult:
 
-    if n0 < 0.0:
+    if not math.isfinite(n0) or n0 < 0.0:
         raise ValueError("n0 must be non-negative")
-    if A <= 0.0:
+    if not math.isfinite(A) or A <= 0.0:
         raise ValueError("A = a*sqrt(Omega) for a quantum fluid must be positive")
     if not math.isfinite(cS2_over_Omega):
         raise ValueError("cS2_over_Omega must be finite")

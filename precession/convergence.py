@@ -63,7 +63,7 @@ def convergence_study(
 
     finite = [value for value in differences.values() if value is not None]
     radial = differences.get("radial", base.error_radial)
-    anomaly = differences.get("anomaly", 0.0)
+    anomaly = max(differences.get("anomaly", 0.0), base.error_anomaly)
     angular = differences.get("angular", 0.0)
     uv = differences.get("uv", 0.0)
     harmonic_refinement = differences.get("harmonic", 0.0)

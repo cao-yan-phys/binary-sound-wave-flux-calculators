@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .classical_closed_sum import classical_total_pair_kernel_dr
+from .classical_closed_sum import classical_pair_average
 from .conservative_kernels import ClassicalFluid, ConservativeMedium, QuantumFluid, static_ir_is_prescription_dependent
 from .offshell_source import cuda_available
 from .pair_orbit import PairOrbitGeometry, build_pair_orbit_geometry
@@ -41,30 +41,10 @@ def _closed_classical_parts(
     orbit: "BinaryOrbit",
     fluid: ClassicalFluid,
 ) -> np.ndarray:
-    parts = np.zeros(4, dtype=np.float64)
-    fractions = geometry.mass_fractions
-    for body_a in range(2):
-        for body_b in range(2):
-            pair = geometry.pairs[(body_a, body_b)]
-            derivative = classical_total_pair_kernel_dr(
-                geometry.delta,
-                pair.separation,
-                rho_bar=fluid.rho_bar,
-                omega_tilde=orbit.physical_omega,
-                c_s=fluid.c_s,
-            )
-            contribution = fractions[body_a] * fractions[body_b] * float(np.mean(derivative * pair.separation_e))
-            parts[0] += contribution
-            if body_a == 0 and body_b == 0:
-                parts[1] += contribution
-            elif body_a == 1 and body_b == 1:
-                parts[2] += contribution
-            else:
-                parts[3] += contribution
-    return parts
+    return classical_pair_average(orbit, rho_bar=fluid.rho_bar, c_s=fluid.c_s, n_ell=len(geometry.grid.ell))[0]
 
 
-def _harmonic_tail(rows: list["HarmonicContribution"], config: "PrecessionConfig") -> tuple[bool, float | None, dict[str, object]]:
+def _harmonic_tail(rows: list["HarmonicContribution"], config: "PrecessionConfig", response_scale: float = 1.0) -> tuple[bool, float | None, dict[str, object]]:
     osc_rows = [row for row in rows if row.n > 0 and row.delta_varpi is not None]
     if not osc_rows:
         return True, 0.0, {"mode": "not_applicable"}
@@ -78,15 +58,17 @@ def _harmonic_tail(rows: list["HarmonicContribution"], config: "PrecessionConfig
         [[row.delta_varpi, row.self_1, row.self_2, row.cross] for row in osc_rows[-2 * config.tail_window : -config.tail_window]],
         dtype=np.float64,
     )
-    total = np.sum(
-        np.asarray([[row.delta_varpi, row.self_1, row.self_2, row.cross] for row in osc_rows], dtype=np.float64), axis=0
-    )
-    scale = np.maximum(np.abs(total), np.finfo(float).tiny)
+    accumulated = np.sum(np.abs(np.asarray(
+        [[row.delta_varpi, row.self_1, row.self_2, row.cross] for row in osc_rows], dtype=np.float64
+    )), axis=0)
+    static = next((row for row in rows if row.n == 0 and row.delta_varpi is not None), None)
+    static_scale = np.zeros(4) if static is None else np.abs([static.delta_varpi, static.self_1, static.self_2, static.cross])
+    scale = np.maximum(np.maximum(accumulated, static_scale), np.finfo(float).tiny)
     recent_absolute = np.sum(np.abs(recent), axis=0)
     signed_change = np.abs(np.sum(recent, axis=0) - np.sum(previous, axis=0))
     converged = bool(
-        np.all(recent_absolute / scale <= config.tail_rtol)
-        and np.all(signed_change / scale <= config.tail_rtol)
+        np.all(recent_absolute <= config.tail_atol * response_scale + config.tail_rtol * scale)
+        and np.all(signed_change <= config.tail_atol * response_scale + config.tail_rtol * scale)
     )
     return converged, float(max(recent_absolute[0], signed_change[0])), {
         "block_size": config.tail_window,
@@ -161,7 +143,7 @@ def _build_result(
         harmonics=tuple(rows),
         error_radial=0.0,
         error_harmonic=harmonic_error,
-        error_anomaly=0.0,
+        error_anomaly=math.inf,
         error_angular=0.0,
         error_uv=0.0,
         error_static_ir=math.inf if static_ir else None,
@@ -245,6 +227,7 @@ def _per_harmonic(
     n_values = range(0, config.n_max + 1) if config.sector == "total" else (range(0, 1) if config.sector == "static" else range(1, config.n_max + 1))
     consecutive = 0
     terminated = False
+    response_scale = 4.0 * math.pi * medium.rho_bar / orbit.physical_omega**2
     for n in n_values:
         if n == 0 and static_ir:
             rows.append(
@@ -298,7 +281,7 @@ def _per_harmonic(
             static_parts = delta_parts
         else:
             osc_parts = delta_parts if osc_parts is None else osc_parts + delta_parts
-            converged, _, _ = _harmonic_tail(rows, config)
+            converged, _, _ = _harmonic_tail(rows, config, response_scale)
             if converged:
                 consecutive += 1
                 if consecutive >= config.consecutive_windows:
@@ -306,9 +289,8 @@ def _per_harmonic(
                     break
             else:
                 consecutive = 0
-    harmonic_converged, harmonic_error, tail_metadata = _harmonic_tail(rows, config)
-    if terminated:
-        harmonic_converged = True
+    _, harmonic_error, tail_metadata = _harmonic_tail(rows, config, response_scale)
+    harmonic_converged = config.sector == "static" or terminated
     return _build_result(
         orbit,
         medium,
@@ -332,13 +314,10 @@ def _classical_closed_sum(
 ) -> "PrecessionResult":
     from .periastron_precession import HarmonicContribution
 
-    geometry = build_pair_orbit_geometry(orbit, config.n_ell)
     prefactor = _precession_prefactor(orbit)
-    static_pair_parts = _parts_from_radial_function(
-        geometry,
-        lambda radius: classical_gprime_n(fluid, 0.0, radius),
+    total_pair_parts, static_pair_parts = classical_pair_average(
+        orbit, rho_bar=fluid.rho_bar, c_s=fluid.c_s, n_ell=config.n_ell,
     )
-    total_pair_parts = _closed_classical_parts(geometry, orbit, fluid)
     static_parts = prefactor * static_pair_parts if config.sector in ("total", "static") else None
     total_parts = prefactor * total_pair_parts
     if config.sector == "osc":
@@ -458,6 +437,7 @@ def _classical_self_gravity_closed_correction(
     correction_parts = np.zeros(4, dtype=np.float64)
     consecutive = 0
     terminated = False
+    response_scale = 4.0 * math.pi * fluid.rho_bar / orbit.physical_omega**2
     for n in range(1, config.n_max + 1):
         omega = n * orbit.physical_omega
         if cuda_correction is None:
@@ -485,7 +465,7 @@ def _classical_self_gravity_closed_correction(
                 radial_subtraction=False,
             )
         )
-        converged, _, _ = _harmonic_tail(rows, config)
+        converged, _, _ = _harmonic_tail(rows, config, response_scale)
         if converged:
             consecutive += 1
             if consecutive >= config.consecutive_windows:
@@ -493,9 +473,8 @@ def _classical_self_gravity_closed_correction(
                 break
         else:
             consecutive = 0
-    harmonic_converged, harmonic_error, harmonic_metadata = _harmonic_tail(rows, config)
-    if terminated:
-        harmonic_converged = True
+    _, harmonic_error, harmonic_metadata = _harmonic_tail(rows, config, response_scale)
+    harmonic_converged = terminated
     harmonic_metadata["summand"] = "self_gravity_minus_acoustic_reference"
     return _build_result(
         orbit,
@@ -574,6 +553,16 @@ def _calculate_analytic(orbit: "BinaryOrbit", medium: ConservativeMedium, config
     return _per_harmonic(orbit, medium, config)
 
 
+def _calculate_with_circular_limit(
+    orbit: "BinaryOrbit",
+    medium: ConservativeMedium,
+    config: "PrecessionConfig",
+) -> "PrecessionResult":
+    if orbit.e < config.e_switch:
+        return _fit_circular_limit_analytic(orbit, medium, config)
+    return _calculate_analytic(orbit, medium, config)
+
+
 def calculate_precession_analytic(
     orbit: "BinaryOrbit",
     medium: ConservativeMedium,
@@ -582,6 +571,57 @@ def calculate_precession_analytic(
 
     if config.source_size != 0.0:
         raise ValueError("analytic_realspace is point-source only; use engine='legacy_kspace_validation' for a finite source window")
-    if orbit.e < config.e_switch:
-        return _fit_circular_limit_analytic(orbit, medium, config)
-    return _calculate_analytic(orbit, medium, config)
+    response_scale = 4.0 * math.pi * medium.rho_bar / orbit.physical_omega**2
+    inner_config = replace(config, strict_convergence=False)
+    result = _calculate_with_circular_limit(orbit, medium, inner_config)
+    history = []
+    error = math.inf
+    converged = False
+
+    def values(sample):
+        return np.asarray([
+            value for name, value in vars(sample).items()
+            if name.startswith("delta_varpi_") and value is not None
+        ], dtype=np.float64)
+
+    history.append({"n_ell": config.n_ell, "delta_varpi_total": result.delta_varpi_total, "error": None})
+    for refinement in range(1, config.anomaly_max_refinements + 1):
+        next_n = config.n_ell * 2**refinement
+        if next_n > config.anomaly_max_n_ell:
+            break
+        refined_config = replace(inner_config, n_ell=next_n)
+        refined = _calculate_with_circular_limit(orbit, medium, refined_config)
+        old, new = values(result), values(refined)
+        differences = np.abs(new - old)
+        error = float(np.max(differences, initial=0.0))
+        converged = bool(np.all(differences <= config.anomaly_atol * response_scale + config.anomaly_rtol * np.abs(new)))
+        history.append({"n_ell": refined_config.n_ell, "delta_varpi_total": refined.delta_varpi_total, "error": error})
+        result = refined
+        if converged:
+            break
+    metadata = dict(result.metadata)
+    metadata["anomaly_refinement"] = history
+    metadata["anomaly_termination"] = "tolerance" if converged else "safety_cap"
+    metadata["response_eta"] = response_scale
+    metadata["orbital_perturbation_only"] = result.perturbative_valid
+    if isinstance(medium, ClassicalFluid):
+        mach = orbit.a * orbit.physical_omega / medium.c_s
+        factor = math.sqrt((1.0 + orbit.e) / (1.0 - orbit.e))
+        metadata["maximum_body_mach"] = [orbit.f2 * mach * factor, orbit.f1 * mach * factor]
+        metadata["orbital_scale_source_strength"] = [orbit.f1 * mach**2, orbit.f2 * mach**2]
+    if isinstance(medium, ClassicalFluid):
+        metadata["orbit_quadrature"] = "wavefront-split Kepler quadrature plus mean-anomaly harmonic correction"
+    error = max(error, result.error_anomaly if math.isfinite(result.error_anomaly) else 0.0)
+    result = replace(
+        result,
+        anomaly_converged=converged,
+        n_ell_used=int(metadata["n_ell"]),
+        error_anomaly=error,
+        error_total=None if result.delta_varpi_total is None or result.error_harmonic is None else math.hypot(error, result.error_harmonic),
+        metadata=metadata,
+    )
+    if config.strict_convergence and not result.harmonic_converged:
+        raise RuntimeError("analytic harmonic sum did not converge before the n_max safety cap")
+    if config.strict_convergence and not converged:
+        raise RuntimeError("orbital quadrature did not converge before the anomaly refinement safety cap")
+    return result

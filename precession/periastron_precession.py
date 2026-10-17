@@ -41,7 +41,12 @@ class PrecessionConfig:
     source_window: Window = "gaussian"
     tail_window: int = 2
     tail_rtol: float = 1.0e-5
+    tail_atol: float = 1.0e-10
     consecutive_windows: int = 2
+    anomaly_rtol: float = 1.0e-3
+    anomaly_atol: float = 1.0e-5
+    anomaly_max_refinements: int = 3
+    anomaly_max_n_ell: int = 2048
     strict_convergence: bool = True
     e_switch: float = 1.0e-3
     perturbative_max_shift: float = 0.1
@@ -100,6 +105,12 @@ class PrecessionConfig:
             raise ValueError("unsupported source_window")
         if self.tail_window < 1 or self.consecutive_windows < 1 or self.tail_rtol <= 0.0 or self.e_switch <= 0.0:
             raise ValueError("tail and circular-limit controls must be positive")
+        if self.tail_atol < 0.0 or self.anomaly_atol < 0.0 or self.anomaly_rtol <= 0.0:
+            raise ValueError("invalid absolute or anomaly tolerance")
+        if self.anomaly_max_refinements < 0:
+            raise ValueError("anomaly_max_refinements must be non-negative")
+        if self.anomaly_max_n_ell < 32 or self.anomaly_max_n_ell & (self.anomaly_max_n_ell - 1):
+            raise ValueError("anomaly_max_n_ell must be a power of two and at least 32")
         if self.backend not in ("auto", "cuda", "cpu"):
             raise ValueError("backend must be 'auto', 'cuda', or 'cpu'")
         if self.engine == "legacy_kspace_validation" and self.backend == "cuda" and not cuda_available():
@@ -159,10 +170,18 @@ class PrecessionResult:
     include_self_gravity: bool
     response_prescription: str
     metadata: dict[str, object]
+    anomaly_converged: bool = False
+    n_ell_used: int | None = None
+
+    @property
+    def delta_varpi_total_normalized(self) -> float | None:
+        scale = self.metadata.get("response_eta")
+        return None if self.delta_varpi_total is None or not scale else self.delta_varpi_total / scale
 
     def to_json_dict(self) -> dict[str, object]:
         data = asdict(self)
         data["harmonics"] = [asdict(row) for row in self.harmonics]
+        data["delta_varpi_total_normalized"] = self.delta_varpi_total_normalized
         return data
 
     def write(self, output_dir: Path) -> None:
