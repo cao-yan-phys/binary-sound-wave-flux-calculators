@@ -99,6 +99,6 @@ $$
 The optional uniform-sphere model uses `R1_over_a=R_1/a` and `R2_over_a=R_2/a`; both default to zero in the point-particle model. For body $I$, the source factor is multiplied by
 
 $$
-W(k_nR_I)=3\frac{\sin(k_nR_I)-k_nR_I\cos(k_nR_I)}{(k_nR_I)^3}.
+W(k_nR_I)=3\frac{\sin(k_nR_I)-k_nR_I\cos(k_nR_I)}{(k_nR_I)^3},
 $$
 where $R_I$ is the radius of the sphere with uniform mass density.

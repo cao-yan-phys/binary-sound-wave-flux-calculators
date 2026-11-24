@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from classical_fluid import classical_fluid_force_y, classical_fluid_power, classical_fluid_tau_z
 from edg_single_perturber_coefficients import edg_single_perturber_coefficients
 from quadrupole_fluxes import classical_quadrupole_flux_normalized
-from single_perturber_classical import (
+from single_perturber_classical_fluid import (
     single_perturber_force_y,
     single_perturber_power,
     single_perturber_tau_z,

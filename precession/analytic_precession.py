@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .classical_closed_sum import classical_pair_average
+from .classical_fluid_closed_sum import classical_pair_average
 from .conservative_kernels import ClassicalFluid, ConservativeMedium, QuantumFluid, static_ir_is_prescription_dependent
 from .offshell_source import cuda_available
 from .pair_orbit import PairOrbitGeometry, build_pair_orbit_geometry
